@@ -21,18 +21,19 @@ cache:
 before_script:
   - pip install -U pip setuptools
   # Install jupyterlab so we can use `jlpm`
-  - pip install build twine hatch jupyterlab
+  - pip install build hatch jupyterlab jupyter-releaser
   - pip install -ve .
 
 bump version:
   stage: version
   artifacts:
     paths:
-      - package.json
+      - .jupyter_releaser_checkout # This is what jupyter-releaser creates
   tags:
     - prod-runner
   script:
-    - hatch version patch
+    - jupyter-releaser init-git
+    - jupyter-releaser bump-version
   except:
     - external_pull_requests
   only:
@@ -42,16 +43,14 @@ commit version bump:
   stage: commit
   artifacts:
     paths:
-      - package.json
+      - .jupyter_releaser_checkout # This is what jupyter-releaser creates
   tags:
     - prod-runner
   before_script:
+    - cd .jupyter_releaser_checkout
     - pip install -U pip setuptools
     - pip install build twine hatch
-    - git clone --branch "${CI_COMMIT_REF_NAME}" "https://ithaka-labs:${GITHUB_PAT}@github.com/ithaka/jupyter-resource-usage.git" jupyter-resource-usage-clone
-    - cp package.json jupyter-resource-usage-clone
-    - cd jupyter-resource-usage-clone
-    - git add package.json
+    - git add .
     - git config --global user.email "GRP_ITHAKA_JSTOR_Labs@ithaka.org"
     - git config --global user.name "ITHAKA Labs"
     # run this so hatch is primed and ready, else it may output things we don't want in out version bump commit
@@ -69,10 +68,11 @@ build:
   artifacts:
     untracked: true
     paths:
-      - package.json
+      - .jupyter_releaser_checkout
   tags:
     - prod-runner
   script:
+    - cd .jupyter_releaser_checkout
     - jlpm install
     - jlpm run build
     - mkdir -p dist
@@ -83,4 +83,4 @@ publish:
   tags:
     - prod-runner
   script:
-    - twine upload --repository-url https://artifactory.acorn.cirrostratus.org/artifactory/api/pypi/pypi-local -u "" -p "" dist/*whl
+    - twine upload --repository-url https://artifactory.acorn.cirrostratus.org/artifactory/api/pypi/pypi-local -u "" -p "" .jupyter_releaser_checkout/dist/*whl
