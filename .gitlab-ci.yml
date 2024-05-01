@@ -1,6 +1,7 @@
 image: docker-virtual.artifactory.acorn.cirrostratus.org/nikolaik/python-nodejs:python3.11-nodejs18
 
 stages:
+  - clone
   - install
   - version
   - commit
@@ -18,21 +19,29 @@ cache:
   paths:
     - .cache/pip
 
-before_script:
-  - pip install -U pip setuptools
-  # Install jupyterlab so we can use `jlpm`
-  - pip install build twine hatch jupyterlab
-  - pip install -ve .
+# Clones the ithaka/jupyter-resource-usage repo into the .jupyter_releaser_checkout directory
+# This is necessary for the jupyter-releaser cli to work
+clone repo for jupyter releaser:
+  stage: clone
+  tags:
+    - prod-runner
+  artifacts:
+    paths:
+      - .jupyter_releaser_checkout
+  script:
+    - git clone --branch "${CI_COMMIT_REF_NAME}" "https://ithaka-labs:${GITHUB_PAT}@github.com/ithaka/jupyter-resource-usage.git" .jupyter_releaser_checkout # jupyter-releaser cli expects this directory
 
 bump version:
   stage: version
   artifacts:
     paths:
-      - package.json
+      - .jupyter_releaser_checkout
   tags:
     - prod-runner
   script:
-    - hatch version patch
+    - pip install jupyter-releaser
+    - pip install -ve .
+    - jupyter-releaser bump-version
   except:
     - external_pull_requests
   only:
@@ -42,16 +51,13 @@ commit version bump:
   stage: commit
   artifacts:
     paths:
-      - package.json
+      - .jupyter_releaser_checkout
   tags:
     - prod-runner
   before_script:
-    - pip install -U pip setuptools
-    - pip install build twine hatch
-    - git clone --branch "${CI_COMMIT_REF_NAME}" "https://ithaka-labs:${GITHUB_PAT}@github.com/ithaka/jupyter-resource-usage.git" jupyter-resource-usage-clone
-    - cp package.json jupyter-resource-usage-clone
-    - cd jupyter-resource-usage-clone
-    - git add package.json
+    - cd .jupyter_releaser_checkout
+    - pip install hatch
+    - git add .
     - git config --global user.email "GRP_ITHAKA_JSTOR_Labs@ithaka.org"
     - git config --global user.name "ITHAKA Labs"
     # run this so hatch is primed and ready, else it may output things we don't want in out version bump commit
@@ -67,12 +73,15 @@ commit version bump:
 build:
   stage: build
   artifacts:
-    untracked: true
     paths:
-      - package.json
+      - .jupyter_releaser_checkout/dist
   tags:
     - prod-runner
   script:
+    - cd .jupyter_releaser_checkout
+    - pip install -U pip setuptools
+    - pip install build jupyterlab
+    - pip install -ve .
     - jlpm install
     - jlpm run build
     - mkdir -p dist
@@ -82,5 +91,10 @@ publish:
   stage: publish
   tags:
     - prod-runner
+  before_script:
+    - pip install twine
   script:
-    - twine upload --repository-url https://artifactory.acorn.cirrostratus.org/artifactory/api/pypi/pypi-local -u "" -p "" dist/*whl
+    - twine upload --repository-url https://artifactory.acorn.cirrostratus.org/artifactory/api/pypi/pypi-local -u "" -p "" .jupyter_releaser_checkout/dist/*whl
+  only:
+    - main
+
