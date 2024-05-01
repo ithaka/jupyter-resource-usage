@@ -1,0 +1,86 @@
+image: docker-virtual.artifactory.acorn.cirrostratus.org/nikolaik/python-nodejs:python3.11-nodejs18
+
+stages:
+  - install
+  - version
+  - commit
+  - build
+  - publish
+
+# Change pip's cache directory to be inside the project directory since we can
+# only cache local items.
+variables:
+  PIP_CACHE_DIR: '$CI_PROJECT_DIR/.cache/pip'
+
+# Pip's cache doesn't store the python packages
+# https://pip.pypa.io/en/stable/reference/pip_install/#caching
+cache:
+  paths:
+    - .cache/pip
+
+before_script:
+  - pip install -U pip setuptools
+  # Install jupyterlab so we can use `jlpm`
+  - pip install build twine hatch jupyterlab
+  - pip install -ve .
+
+bump version:
+  stage: version
+  artifacts:
+    paths:
+      - package.json
+  tags:
+    - prod-runner
+  script:
+    - hatch version patch
+  except:
+    - external_pull_requests
+  only:
+    - main
+
+commit version bump:
+  stage: commit
+  artifacts:
+    paths:
+      - package.json
+  tags:
+    - prod-runner
+  before_script:
+    - pip install -U pip setuptools
+    - pip install build twine hatch
+    - git clone --branch "${CI_COMMIT_REF_NAME}" "https://ithaka-labs:${GITHUB_PAT}@github.com/ithaka/jupyter-resource-usage.git" jupyter-resource-usage-clone
+    - cp package.json jupyter-resource-usage-clone
+    - cd jupyter-resource-usage-clone
+    - git add package.json
+    - git config --global user.email "GRP_ITHAKA_JSTOR_Labs@ithaka.org"
+    - git config --global user.name "ITHAKA Labs"
+    # run this so hatch is primed and ready, else it may output things we don't want in out version bump commit
+    - hatch version
+  script:
+    - 'git commit -m "chore: bump package version to $(hatch version) [skip ci]"'
+    - git push origin "${CI_COMMIT_REF_NAME}"
+  except:
+    - external_pull_requests
+  only:
+    - main
+
+build:
+  stage: build
+  artifacts:
+    untracked: true
+    paths:
+      - package.json
+  tags:
+    - prod-runner
+  script:
+    - jlpm install
+    - jlpm run build
+    - mkdir -p dist
+    - python3 -m build
+
+publish:
+  stage: publish
+  tags:
+    - prod-runner
+  script:
+    - twine upload --repository-url https://artifactory.acorn.cirrostratus.org/artifactory/api/pypi/pypi-local -u "" -p "" dist/*whl
